@@ -1,0 +1,2 @@
+# redisQueue
+allow message ack 
