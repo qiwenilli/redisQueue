@@ -43,23 +43,30 @@ func (q *queue) Recive(ctx context.Context) (interface{}, error) {
 
 		// command := `if redis.call("set", KEYS[1], ARGV[1], "ex", 10, "nx") then return "ok" else return "err"; end;`
 		// eval := tx.Eval(ctx1, command, []string{"hit"}, true)
-		lock := tx.SetNX(ctx, q.channelLock, true, time.Hour)
-		if lock.Err() != nil {
-			return lock.Err()
-		}
-		if !lock.Val() {
-			return fmt.Errorf("%s", "wait ack")
-		}
-		if q.autoAck {
-			err := tx.Del(ctx, q.channelLock).Err()
-			if err != nil {
-				return err
+
+		if !q.autoAck {
+			lock := tx.SetNX(ctx, q.channelLock, true, time.Hour)
+			if lock.Err() != nil {
+				return lock.Err()
+			}
+			if !lock.Val() {
+				return fmt.Errorf("%s", "wait ack")
 			}
 		}
 
 		cmd := tx.RPop(ctx, q.channelName)
 		err := cmd.Err()
 		if err != nil {
+			if err == redis.Nil {
+				for {
+					err = tx.Del(ctx, q.channelLock).Err()
+					if err != nil && err == redis.Nil {
+						time.Sleep(time.Millisecond * 100)
+						continue
+					}
+					break
+				}
+			}
 			return err
 		}
 		elem := &element{}
@@ -74,5 +81,14 @@ func (q *queue) Recive(ctx context.Context) (interface{}, error) {
 }
 
 func (q *queue) Ack(ctx context.Context) error {
-	return q.cli.Del(ctx, q.channelLock).Err()
+	var err error
+	for {
+		err = q.cli.Del(ctx, q.channelLock).Err()
+		if err != nil && err == redis.Nil {
+			time.Sleep(time.Millisecond * 100)
+			continue
+		}
+		break
+	}
+	return err
 }
