@@ -39,9 +39,9 @@ func Test_queue(t *testing.T) {
 	run_queue("q1", false)
 }
 
-func Test_queue_auto(t *testing.T) {
-	run_queue("q2", true)
-}
+// func Test_queue_auto(t *testing.T) {
+// 	run_queue("q2", true)
+// }
 
 func run_queue(queueName string, autoAck bool) {
 
@@ -64,21 +64,22 @@ func run_queue(queueName string, autoAck bool) {
 
 	count := atomic.NewInt32(0)
 	go func() {
-		consume(q, "1", count)
+		consume(q, "1", count, autoAck)
 	}()
 	go func() {
-		consume(q, "2", count)
+		consume(q, "2", count, autoAck)
 	}()
-	consume(q, "3", count)
+	consume(q, "3", count, autoAck)
 }
 
-func consume(q *queue, prefix string, count *atomic.Int32) {
+func consume(q *queue, prefix string, count *atomic.Int32, autoAck bool) {
 	for {
 		if count.Load() >= maxMsg {
 			break
 		}
 
 		v, err := q.Recive(context.Background())
+		_ = v
 		if err != nil {
 			log.Println(err)
 			continue
@@ -86,9 +87,10 @@ func consume(q *queue, prefix string, count *atomic.Int32) {
 
 		log.Println(prefix, "_consume----> ", v, err, count.Load())
 
-		q.Ack(context.Background())
+		if !autoAck {
+			q.Ack(context.Background())
+		}
 
 		count.Inc()
-		log.Println(count.Load(), maxMsg)
 	}
 }
