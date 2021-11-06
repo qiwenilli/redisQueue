@@ -13,19 +13,29 @@ var (
 	ERR_ASSERT_STRING_FAILD = errors.New("assert string faild")
 )
 
-func NewQueue(cli redis.UniversalClient, channelName string, autoAck bool) *queue {
-	return &queue{cli, channelName, channelName + "_lock", autoAck}
-}
-
 // 有序消费除列，必须ack, 消费未消费成功，不会返回数据
 type queue struct {
-	cli         redis.UniversalClient
-	channelName string
-	channelLock string
-	autoAck     bool
+	cli       redis.UniversalClient
+	queueName string
+	queueLock string
+	autoAck   bool
 }
 type element struct {
 	Val interface{}
+}
+
+func NewQueue(cli redis.UniversalClient, opts ...option) *queue {
+
+	queueOpt := &queueOption{}
+	for _, opt := range opts {
+		opt(queueOpt)
+	}
+	return &queue{
+		cli,
+		queueOpt.prefix + "-" + queueOpt.name,
+		queueOpt.prefix + "-" + queueOpt.name + "_lock",
+		queueOpt.autoAck,
+	}
 }
 
 func (e *element) MarshalBinary() (data []byte, err error) {
@@ -37,7 +47,7 @@ func (e *element) UnmarshalBinary(data []byte) error {
 }
 
 func (q *queue) Add(ctx context.Context, val interface{}) error {
-	return q.cli.LPush(ctx, q.channelName, &element{val}).Err()
+	return q.cli.LPush(ctx, q.queueName, &element{val}).Err()
 }
 
 func (q *queue) Recive(ctx context.Context) (interface{}, error) {
@@ -54,7 +64,7 @@ if len > 0 then
 else
 	return redis.call("RPopLPush",KEYS[1],KEYS[2])
 end`
-			cmd := q.cli.Eval(ctx, script, []string{q.channelName, q.channelLock})
+			cmd := q.cli.Eval(ctx, script, []string{q.queueName, q.queueLock})
 			if cmd.Err() != nil {
 				return cmd.Err()
 			}
@@ -75,7 +85,7 @@ end`
 			}
 
 		} else {
-			cmd = q.cli.RPop(ctx, q.channelName)
+			cmd = q.cli.RPop(ctx, q.queueName)
 			if err == redis.Nil {
 				return nil
 			}
@@ -107,7 +117,7 @@ if len > 0 then
 else
 	return nil
 end`
-	cmd := q.cli.Eval(ctx, script, []string{q.channelLock})
+	cmd := q.cli.Eval(ctx, script, []string{q.queueLock})
 	if cmd.Err() != nil {
 		return cmd.Err()
 	}

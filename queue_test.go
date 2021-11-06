@@ -36,16 +36,17 @@ func init() {
 }
 
 func Test_queue(t *testing.T) {
-	run_queue("q1", false)
+	q := NewQueue(cli, WithPrefix("qiwen"), WithName("q1"), WithAck(false))
+	run_queue(q)
 }
 
 // func Test_queue_auto(t *testing.T) {
-// 	run_queue("q2", true)
+// 	q := NewQueue(cli, WithPrefix("qiwen"), WithName("q2"), WithAck(true))
+// 	run_queue(q)
 // }
 
-func run_queue(queueName string, autoAck bool) {
+func run_queue(q *queue) {
 
-	q := NewQueue(cli, queueName, autoAck)
 	go func() {
 		var i int32 = 0
 		for {
@@ -64,15 +65,15 @@ func run_queue(queueName string, autoAck bool) {
 
 	count := atomic.NewInt32(0)
 	go func() {
-		consume(q, "1", count, autoAck)
+		consume(q, "1", count)
 	}()
 	go func() {
-		consume(q, "2", count, autoAck)
+		consume(q, "2", count)
 	}()
-	consume(q, "3", count, autoAck)
+	consume(q, "3", count)
 }
 
-func consume(q *queue, prefix string, count *atomic.Int32, autoAck bool) {
+func consume(q *queue, prefix string, count *atomic.Int32) {
 	for {
 		if count.Load() >= maxMsg {
 			break
@@ -87,9 +88,7 @@ func consume(q *queue, prefix string, count *atomic.Int32, autoAck bool) {
 
 		log.Println(prefix, "_consume----> ", v, err, count.Load())
 
-		if !autoAck {
-			q.Ack(context.Background())
-		}
+		q.Ack(context.Background())
 
 		count.Inc()
 	}
