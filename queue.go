@@ -3,10 +3,14 @@ package redisQueue
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"time"
+	"errors"
 
 	"github.com/go-redis/redis/v8"
+)
+
+var (
+	ERR_WAIT_ACK            = errors.New("wait ack")
+	ERR_ASSERT_STRING_FAILD = errors.New("assert string faild")
 )
 
 func NewQueue(cli redis.UniversalClient, channelName string, autoAck bool) *queue {
@@ -39,56 +43,73 @@ func (q *queue) Add(ctx context.Context, val interface{}) error {
 func (q *queue) Recive(ctx context.Context) (interface{}, error) {
 
 	var v interface{}
-	err := q.cli.Watch(ctx, func(tx *redis.Tx) error {
+	err := func() error {
 
-		// command := `if redis.call("set", KEYS[1], ARGV[1], "ex", 10, "nx") then return "ok" else return "err"; end;`
-		// eval := tx.Eval(ctx1, command, []string{"hit"}, true)
-
+		var err error
+		var cmd *redis.StringCmd
 		if !q.autoAck {
-			lock := tx.SetNX(ctx, q.channelLock, true, time.Hour)
-			if lock.Err() != nil {
-				return lock.Err()
+			script := `local len = redis.call("LLen",KEYS[2])
+if len > 0 then
+	return nil
+else
+	return redis.call("RPopLPush",KEYS[1],KEYS[2])
+end`
+			cmd := q.cli.Eval(ctx, script, []string{q.channelName, q.channelLock})
+			if cmd.Err() != nil {
+				return cmd.Err()
 			}
-			if !lock.Val() {
-				return fmt.Errorf("%s", "wait ack")
+			if cmd.Val() == nil {
+				return ERR_WAIT_ACK
 			}
+			err = nil
+			//
+			jsonData, ok := cmd.Val().(string)
+			if ok {
+				elem := &element{}
+				err = json.Unmarshal([]byte(jsonData), elem)
+				if err == nil {
+					v = elem.Val
+				}
+			} else {
+				err = ERR_ASSERT_STRING_FAILD
+			}
+
+		} else {
+			cmd = q.cli.RPop(ctx, q.channelName)
+			if err == redis.Nil {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+
+			elem := &element{}
+			err = cmd.Scan(elem)
+			if err != nil {
+				return err
+			}
+			v = elem.Val
 		}
 
-		cmd := tx.RPop(ctx, q.channelName)
-		err := cmd.Err()
-		if err != nil {
-			if err == redis.Nil {
-				for {
-					err = tx.Del(ctx, q.channelLock).Err()
-					if err != nil && err == redis.Nil {
-						time.Sleep(time.Millisecond * 100)
-						continue
-					}
-					break
-				}
-			}
-			return err
-		}
-		elem := &element{}
-		err = cmd.Scan(elem)
-		if err != nil {
-			return err
-		}
-		v = elem.Val
-		return nil
-	}, q.channelName)
+		return err
+	}()
 	return v, err
 }
 
 func (q *queue) Ack(ctx context.Context) error {
-	var err error
-	for {
-		err = q.cli.Del(ctx, q.channelLock).Err()
-		if err != nil && err == redis.Nil {
-			time.Sleep(time.Millisecond * 100)
-			continue
-		}
-		break
+	if q.autoAck {
+		return nil
 	}
-	return err
+
+	script := `local len = redis.call("LLen",KEYS[1])
+if len > 0 then
+	return redis.call("RPop",KEYS[1])
+else
+	return nil
+end`
+	cmd := q.cli.Eval(ctx, script, []string{q.channelLock})
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+	return nil
 }
