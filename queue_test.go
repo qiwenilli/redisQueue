@@ -11,7 +11,7 @@ import (
 )
 
 var (
-	maxMsg int32 = 100
+	maxMsg int32 = 100000
 
 	cli redis.UniversalClient
 )

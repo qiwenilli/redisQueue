@@ -14,6 +14,12 @@ var (
 )
 
 // 有序消费除列，必须ack, 消费未消费成功，不会返回数据
+type Queue interface {
+	Add(ctx context.Context, val interface{}) error
+	Recive(ctx context.Context) (interface{}, error)
+	Ack(ctx context.Context) error
+}
+
 type queue struct {
 	cli       redis.UniversalClient
 	queueName string
@@ -24,7 +30,7 @@ type element struct {
 	Val interface{}
 }
 
-func NewQueue(cli redis.UniversalClient, opts ...option) *queue {
+func NewQueue(cli redis.UniversalClient, opts ...option) Queue {
 
 	queueOpt := &queueOption{}
 	for _, opt := range opts {
