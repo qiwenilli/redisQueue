@@ -17,6 +17,7 @@ var (
 type Queue interface {
 	Add(ctx context.Context, val interface{}) error
 	Recive(ctx context.Context) (interface{}, error)
+	Rollback(ctx context.Context) error
 	Ack(ctx context.Context) error
 }
 
@@ -110,6 +111,29 @@ end`
 		return err
 	}()
 	return v, err
+}
+
+func (q *queue) Rollback(ctx context.Context) error {
+
+	script := `local len = redis.call("LLen",KEYS[1])
+if len > 0 then
+	local val =  redis.call("RPop",KEYS[1])
+	return redis.call("RPush",KEYS[2],val)
+else
+	return 0
+end`
+	cmd := q.cli.Eval(ctx, script, []string{q.queueLock, q.queueName})
+	if cmd.Err() != nil {
+		return cmd.Err()
+	}
+	val := cmd.Val()
+	if val, ok := val.(int64); ok {
+		if val == 0 {
+			return errors.New("rollback error")
+		}
+		return nil
+	}
+	return errors.New("assert error")
 }
 
 func (q *queue) Ack(ctx context.Context) error {
